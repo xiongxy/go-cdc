@@ -5,8 +5,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func Parse(jsonStr string) ConfigModel {
-	var u ConfigModel
+func Parse(jsonStr string) Conf {
+	var u Conf
 	err := json.Unmarshal([]byte(jsonStr), &u)
 	if err != nil {
 		logrus.Warning("Parse configModel fail")

@@ -7,35 +7,45 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgproto3/v2"
+	"github.com/satori/go.uuid"
 	"log"
-	"strconv"
 	"time"
 )
 
-func NewPostgresMonitor(identity int, listen conf.ListenModel, tableMap map[string]bool, quickTable map[string]mapset.Set) *Monitor {
-	return &Monitor{
-		Identity:            identity,
-		Listen:              listen,
-		TableMap:            tableMap,
+func NewPostgresMonitor(conf conf.Conf, tableColumn map[string][]string, tableMap map[string]bool, quickTable map[string]mapset.Set) *PgMonitor {
+	return &PgMonitor{
+		Identity:            conf.Identity,
+		Conf:                conf,
+		TableColumn:         tableColumn,
+		TableExistMap:       tableMap,
 		QuickReferenceTable: quickTable,
 	}
 }
 
-type Monitor struct {
+type PgMonitor struct {
 	Identity            int
-	Listen              conf.ListenModel
-	TableMap            map[string]bool
+	Conf                conf.Conf
+	TableColumn         map[string][]string
+	TableExistMap       map[string]bool
 	QuickReferenceTable map[string]mapset.Set
 }
 
-func (m Monitor) Monitor(exec func(mapset.Set)) {
-	connStr := m.Listen.ConnectionString + "?replication=database"
+func (m PgMonitor) Run(exec func(mapset.Set)) error {
 
-	outputPlugin := m.Listen.PluginName
+	slotConf := m.Conf.SlotConf
 
-	pluginArguments := m.Listen.PluginArguments
+	outputPlugin := slotConf.PluginName
 
-	slotName := "cdc_" + strconv.Itoa(m.Identity) + "_slot"
+	pluginArguments := slotConf.PluginArguments
+
+	var slotName = ""
+	if slotConf.SlotName == "" {
+		slotName = "slot_" + uuid.NewV4().String()
+	} else {
+		slotName = slotConf.SlotName
+	}
+
+	connStr := m.Conf.Listen.ConnectionString
 
 	conn, err := pgconn.Connect(context.Background(), connStr)
 	if err != nil {
@@ -43,30 +53,16 @@ func (m Monitor) Monitor(exec func(mapset.Set)) {
 	}
 	defer conn.Close(context.Background())
 
-	if outputPlugin == "pgoutput" {
-		result := conn.Exec(context.Background(), "DROP PUBLICATION IF EXISTS "+slotName)
-		_, err := result.ReadAll()
-		if err != nil {
-			log.Fatalln("drop publication if exists error", err)
-		}
-
-		result = conn.Exec(context.Background(), "CREATE PUBLICATION "+slotName+" FOR ALL TABLES;")
-		_, err = result.ReadAll()
-		if err != nil {
-			log.Fatalln("create publication error", err)
-		}
-		log.Println("create publication pglogrepl_demo")
-
-		pluginArguments = []string{"proto_version '1'", "publication_names '" + slotName + "'"}
-	}
-
+	// get IdentifySystem
 	systemInfo, err := pglogrepl.IdentifySystem(context.Background(), conn)
 	if err != nil {
 		log.Fatalln("IdentifySystem failed:", err)
 	}
 	log.Println("SystemID:", systemInfo.SystemID, "Timeline:", systemInfo.Timeline, "XLogPos:", systemInfo.XLogPos, "DBName:", systemInfo.DBName)
 
-	_, err = pglogrepl.CreateReplicationSlot(context.Background(), conn, slotName, outputPlugin, pglogrepl.CreateReplicationSlotOptions{Temporary: true})
+	// is temporary slot
+	temporary := slotConf.Temporary
+	_, err = pglogrepl.CreateReplicationSlot(context.Background(), conn, slotName, outputPlugin, pglogrepl.CreateReplicationSlotOptions{Temporary: temporary})
 	if err != nil {
 		log.Fatalln("CreateReplicationSlot failed:", err)
 	}
@@ -121,21 +117,25 @@ func (m Monitor) Monitor(exec func(mapset.Set)) {
 				if err != nil {
 					log.Fatalln("ParseXLogData failed:", err)
 				}
+				m.modeProcess(xld, exec)
 				log.Println("XLogData =>", "WALStart", xld.WALStart, "ServerWALEnd", xld.ServerWALEnd, "ServerTime:", xld.ServerTime, "WALData", string(xld.WALData))
-
-				switch m.Listen.PluginName {
-				case "wal2json":
-					ta := m.Wal2JsonProcess(string(xld.WALData))
-					exec(ta)
-					break
-				case "pgoutput":
-					m.PgOutputProcess(string(xld.WALData))
-				}
-
 				clientXLogPos = xld.WALStart + pglogrepl.LSN(len(xld.WALData))
 			}
 		default:
 			log.Printf("Received unexpected message: %#v\n", msg)
 		}
+	}
+}
+
+func (m PgMonitor) modeProcess(xld pglogrepl.XLogData, exec func(mapset.Set)) {
+
+	switch m.Conf.SlotConf.PluginName {
+	case "wal2json":
+		set := m.Wal2JsonProcess1(string(xld.WALData))
+		exec(set)
+		break
+	case "test_decoding":
+		//
+		break
 	}
 }

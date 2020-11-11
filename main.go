@@ -2,22 +2,43 @@ package main
 
 import (
 	"cdc-distribute/conf"
-	"cdc-distribute/core"
+	"cdc-distribute/core/process"
+	"cdc-distribute/core/runner"
 	"github.com/joho/godotenv"
-	log "github.com/sirupsen/logrus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/sirupsen/logrus"
+	"net/http"
 	"os"
 )
 
 func init() {
 	godotenv.Load()
-	log.SetFormatter(&log.JSONFormatter{})
-	log.SetOutput(os.Stdout)
-	log.SetLevel(log.TraceLevel)
+	logrus.SetFormatter(&logrus.JSONFormatter{})
+	logrus.SetOutput(os.Stdout)
+	logrus.SetLevel(logrus.TraceLevel)
 }
 
 func main() {
 	models := conf.Load()
+
+	go process.LoopProcess()
+
 	for _, v := range models {
-		go core.NewRunner(v).Builder().Run()
+		runner := runner.New(v).Builder()
+		go runner.Run()
 	}
+
+	prometheusAddress := os.Getenv("prometheus_address")
+
+	if prometheusAddress != "" {
+		logrus.Logger.Info("start prometheus handler")
+		// prometheus exporter
+		http.Handle("/metrics", promhttp.Handler())
+		go http.ListenAndServe(prometheusAddress, nil)
+	}
+
+	logrus.Logger.Info("start go-cdc...")
+
+	// block forever
+	select {}
 }

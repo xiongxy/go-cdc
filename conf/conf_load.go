@@ -6,10 +6,10 @@ import (
 	"os"
 )
 
-func Load() []ConfigModel {
+func Load() []Conf {
 	entities := loadDatabase()
 
-	var res []ConfigModel
+	var res []Conf
 
 	for _, v := range entities {
 		configModel := Parse(v.Body)

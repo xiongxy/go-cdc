@@ -2,7 +2,8 @@ package test
 
 import (
 	"cdc-distribute/conf"
-	"cdc-distribute/core"
+	"cdc-distribute/core/process"
+	"cdc-distribute/core/runner"
 	"cdc-distribute/database/postgres"
 	"context"
 	"fmt"
@@ -15,32 +16,43 @@ import (
 	"time"
 )
 
-func Test_Listen(t *testing.T) {
+func getConf() conf.Conf {
 
-	jsonStr := `
+	// "plugin": "test_decoding"
+	// "plugin": "wal2json"
+	confStr := `
 {
+  "identity_id": 1,
   "listen": {
-	"database":"postgres",
-    "connStr": "postgres://postgres:postgres@192.168.227.129/example_db",
-    "plugin": "wal2json",
-    "plugin_args": [
-    ]
+    "database_type": "postgres",
+    "conn": "postgres://postgres:postgres@192.168.142.128/postgres?replication=database"
+  },
+  "slot": {
+    "slotName": "test_demo1",
+    "temporary": false,
+    "plugin": "wal2json", 
+    "plugin_args": []
   },
   "monitors": [
     {
-      "table": "employees",
-      "schema": "public",
+      "table": "test",
+      "schema": "test",
       "fields": ["name"],
+      "behavior": "",
       "action_key": "test1",
       "description": ""
     }
   ]
 }
-
 `
-	res := conf.Parse(jsonStr)
-	res.Identity = 1
-	core.NewRunner(res).Builder().Run()
+	res := conf.Parse(confStr)
+	return res
+}
+
+func Test_Listen(t *testing.T) {
+	res := getConf()
+	go process.LoopProcess()
+	runner.New(res).Builder().Run()
 }
 
 func Test_Process_Time(t *testing.T) {
@@ -71,7 +83,7 @@ func Test_Process_Time(t *testing.T) {
 	quickTable["update:public.employees.name"] = mapset.NewSetFromSlice([]interface{}{"Biology", "Chemistry"})
 	quickTable["update:public.employees.age"] = mapset.NewSetFromSlice([]interface{}{"22", "22"})
 
-	monitor := postgres.NewPostgresMonitor(1, conf.ListenModel{ConnectionString: ""}, tableMap, quickTable)
+	monitor := postgres.NewPostgresMonitor(getConf(), nil, tableMap, quickTable)
 	bT := time.Now()
 	for i := 0; i < 10000; i++ {
 		monitor.Wal2JsonProcess(jsonStr)
