@@ -2,10 +2,11 @@ package process
 
 import (
 	"cdc-distribute/conf"
+	"cdc-distribute/model"
 )
 
 type Process interface {
-	Write(wal ...*interface{}) error
+	Write(wal ...*model.MessageWrapper) error
 	Close()
 }
 

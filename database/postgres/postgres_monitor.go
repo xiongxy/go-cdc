@@ -2,8 +2,9 @@ package postgres
 
 import (
 	"cdc-distribute/conf"
+	"cdc-distribute/model"
 	"context"
-	"github.com/deckarep/golang-set"
+	mapset "github.com/deckarep/golang-set"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgproto3/v2"
@@ -12,27 +13,21 @@ import (
 	"time"
 )
 
-func NewPostgresMonitor(conf conf.Conf, tableColumn map[string][]string, tableMap map[string]bool, quickTable map[string]mapset.Set) *PgMonitor {
+func NewPostgresMonitor(conf conf.Conf, rule model.QuickCheckRule) *PgMonitor {
 	return &PgMonitor{
-		Identity:            conf.Identity,
-		Conf:                conf,
-		TableColumn:         tableColumn,
-		TableExistMap:       tableMap,
-		QuickReferenceTable: quickTable,
+		conf: conf,
+		rule: rule,
 	}
 }
 
 type PgMonitor struct {
-	Identity            int
-	Conf                conf.Conf
-	TableColumn         map[string][]string
-	TableExistMap       map[string]bool
-	QuickReferenceTable map[string]mapset.Set
+	conf conf.Conf
+	rule model.QuickCheckRule
 }
 
-func (m PgMonitor) Run(exec func(mapset.Set)) error {
+func (m PgMonitor) Run(dataChan chan []*model.MessageWrapper) error {
 
-	slotConf := m.Conf.SlotConf
+	slotConf := m.conf.SlotConf
 
 	outputPlugin := slotConf.PluginName
 
@@ -45,7 +40,7 @@ func (m PgMonitor) Run(exec func(mapset.Set)) error {
 		slotName = slotConf.SlotName
 	}
 
-	connStr := m.Conf.Listen.ConnectionString
+	connStr := m.conf.Listen.ConnectionString
 
 	conn, err := pgconn.Connect(context.Background(), connStr)
 	if err != nil {
@@ -117,7 +112,7 @@ func (m PgMonitor) Run(exec func(mapset.Set)) error {
 				if err != nil {
 					log.Fatalln("ParseXLogData failed:", err)
 				}
-				m.modeProcess(xld, exec)
+				m.modeProcess(dataChan, xld)
 				log.Println("XLogData =>", "WALStart", xld.WALStart, "ServerWALEnd", xld.ServerWALEnd, "ServerTime:", xld.ServerTime, "WALData", string(xld.WALData))
 				clientXLogPos = xld.WALStart + pglogrepl.LSN(len(xld.WALData))
 			}
@@ -127,15 +122,22 @@ func (m PgMonitor) Run(exec func(mapset.Set)) error {
 	}
 }
 
-func (m PgMonitor) modeProcess(xld pglogrepl.XLogData, exec func(mapset.Set)) {
+func (m PgMonitor) modeProcess(dataChan chan []*model.MessageWrapper, xld pglogrepl.XLogData) {
+	set := mapset.NewSet()
 
-	switch m.Conf.SlotConf.PluginName {
+	switch m.conf.SlotConf.PluginName {
 	case "wal2json":
-		set := m.Wal2JsonProcess1(string(xld.WALData))
-		exec(set)
+		set = m.Wal2JsonProcess1(string(xld.WALData))
 		break
 	case "test_decoding":
 		//
 		break
 	}
+
+	slice := set.ToSlice()
+	dataList := make([]*model.MessageWrapper, 0)
+	for _, v := range slice {
+		dataList = append(dataList, v.(*model.MessageWrapper))
+	}
+	dataChan <- dataList
 }

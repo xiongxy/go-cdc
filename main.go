@@ -19,13 +19,18 @@ func init() {
 }
 
 func main() {
+
 	models := conf.Load()
 
 	go process.LoopProcess()
 
 	for _, v := range models {
-		runner := runner.New(v).Builder()
-		go runner.Run()
+		runner, err := runner.New(v).Builder()
+		if err != nil {
+			logrus.Errorf("create replication slot err: %v", err)
+		} else {
+			go runner.Run()
+		}
 	}
 
 	prometheusAddress := os.Getenv("prometheus_address")

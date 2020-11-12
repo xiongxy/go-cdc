@@ -2,6 +2,7 @@ package process
 
 import (
 	"cdc-distribute/conf"
+	"cdc-distribute/model"
 	"encoding/json"
 	"github.com/sirupsen/logrus"
 )
@@ -13,7 +14,7 @@ func newFakeHandler(_ *conf.Conf) Process {
 	return &fakeHandler{}
 }
 
-func (l *fakeHandler) Write(datas ...*interface{}) error {
+func (l *fakeHandler) Write(datas ...*model.MessageWrapper) error {
 	for _, data := range datas {
 		bytes, _ := json.Marshal(data)
 		logrus.Infof(string(bytes))

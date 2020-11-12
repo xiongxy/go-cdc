@@ -37,7 +37,7 @@ func (m PgMonitor) Wal2JsonProcess(jsonData string) mapset.Set {
 	set := mapset.NewSet()
 	for _, v := range payload.Change {
 		tableKey := v.Schema + "." + v.Table
-		_, te := m.TableExistMap[tableKey]
+		_, te := m.rule.TableExistMap[tableKey]
 		if !te {
 			continue
 		} else {
@@ -52,7 +52,7 @@ func (m PgMonitor) Wal2JsonProcess(jsonData string) mapset.Set {
 
 			for _, changeColumn := range changeColumns {
 				k := v.Kind + ":" + v.Schema + "." + v.Table + "." + changeColumn
-				value, ok := m.QuickReferenceTable[k]
+				value, ok := m.rule.QuickReferenceTable[k]
 				if ok {
 					set = set.Union(value)
 				}
@@ -67,7 +67,7 @@ func (m PgMonitor) Wal2JsonProcess1(jsonData string) mapset.Set {
 	set := mapset.NewSet()
 	for _, v := range payload.Change {
 		tableKey := v.Schema + "." + v.Table
-		_, te := m.TableExistMap[tableKey]
+		_, te := m.rule.TableExistMap[tableKey]
 		if !te {
 			continue
 		} else {
@@ -82,7 +82,7 @@ func (m PgMonitor) Wal2JsonProcess1(jsonData string) mapset.Set {
 
 			for _, changeColumn := range changeColumns {
 				k := v.Kind + ":" + v.Schema + "." + v.Table + "." + changeColumn
-				_, ok := m.QuickReferenceTable[k]
+				_, ok := m.rule.QuickReferenceTable[k]
 				if ok {
 					kind := ""
 					switch v.Kind {
@@ -97,7 +97,7 @@ func (m PgMonitor) Wal2JsonProcess1(jsonData string) mapset.Set {
 						break
 					}
 					data, _ := json.Marshal(m.getRowInfo(v, kind))
-					set.Add(model.NewMessageWrapper(model.RabbitMQ, data))
+					set.Add(model.NewMessageWrapper(data))
 					break
 				}
 			}
@@ -107,7 +107,7 @@ func (m PgMonitor) Wal2JsonProcess1(jsonData string) mapset.Set {
 }
 
 func (m PgMonitor) getRowInfo(change ChangeDef, kind string) model.CdcRowInfo {
-	var primaryKey = m.TableColumn[change.Schema+"."+change.Table][0]
+	var primaryKey = m.rule.TableColumn[change.Schema+"."+change.Table][0]
 	var index = indexOf(primaryKey, change.ColumnNames)
 
 	var msg2send model.CdcRowInfo = model.CdcRowInfo{

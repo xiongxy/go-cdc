@@ -2,6 +2,7 @@ package process
 
 import (
 	"cdc-distribute/conf"
+	"cdc-distribute/model"
 	"encoding/json"
 	"fmt"
 	"github.com/isayme/go-amqp-reconnect/rabbitmq"
@@ -37,7 +38,7 @@ func newRabbitProcess(rabbitConf *conf.RabbitConf) Process {
 	return process
 }
 
-func (m *rabbitProcess) Write(wal ...*interface{}) error {
+func (m *rabbitProcess) Write(wal ...*model.MessageWrapper) error {
 
 	if m.client == nil {
 		panic("Tried to send message before connection was initialized. Don't do that.")
