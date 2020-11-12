@@ -12,7 +12,10 @@ import (
 )
 
 func init() {
-	godotenv.Load()
+	environment := os.Getenv("GO_ENVIRONMENT")
+	if "" == environment {
+		godotenv.Load()
+	}
 	logrus.SetFormatter(&logrus.JSONFormatter{})
 	logrus.SetOutput(os.Stdout)
 	logrus.SetLevel(logrus.TraceLevel)
@@ -36,13 +39,13 @@ func main() {
 	prometheusAddress := os.Getenv("prometheus_address")
 
 	if prometheusAddress != "" {
-		logrus.Logger.Info("start prometheus handler")
+		logrus.Info("start prometheus handler")
 		// prometheus exporter
 		http.Handle("/metrics", promhttp.Handler())
 		go http.ListenAndServe(prometheusAddress, nil)
 	}
 
-	logrus.Logger.Info("start go-cdc...")
+	logrus.Info("start go-cdc...")
 
 	// block forever
 	select {}
