@@ -4,6 +4,7 @@ import (
 	"cdc-distribute/model"
 	"encoding/json"
 	"github.com/deckarep/golang-set"
+	"strings"
 )
 
 type Payload struct {
@@ -41,63 +42,26 @@ func (m PgMonitor) Wal2JsonProcess(jsonData string) mapset.Set {
 		if !te {
 			continue
 		} else {
-			var changeColumns []string
-			if v.Kind == "insert" {
-				changeColumns = v.ColumnNames
-			} else if v.Kind == "update" {
-				changeColumns = compare(v.OldKeys.KeyValues, v.ColumnValues, v.ColumnNames)
-			} else if v.Kind == "delete" {
-				changeColumns = v.ColumnNames
-			}
-
-			for _, changeColumn := range changeColumns {
-				k := v.Kind + ":" + v.Schema + "." + v.Table + "." + changeColumn
-				value, ok := m.rule.QuickReferenceTable[k]
-				if ok {
-					set = set.Union(value)
+			switch v.Kind {
+			case "insert":
+				{
+					data := Wal2JsonBuildWalData(v)
+					set.Add(model.NewMessageWrapper(&data))
+					break
 				}
-			}
-		}
-	}
-	return set
-}
-
-func (m PgMonitor) Wal2JsonProcess1(jsonData string) mapset.Set {
-	payload := Wal2JsonParse(jsonData)
-	set := mapset.NewSet()
-	for _, v := range payload.Change {
-		tableKey := v.Schema + "." + v.Table
-		_, te := m.rule.TableExistMap[tableKey]
-		if !te {
-			continue
-		} else {
-			var changeColumns []string
-			if v.Kind == "insert" {
-				changeColumns = v.ColumnNames
-			} else if v.Kind == "update" {
-				changeColumns = compare(v.OldKeys.KeyValues, v.ColumnValues, v.ColumnNames)
-			} else if v.Kind == "delete" {
-				changeColumns = v.ColumnNames
-			}
-
-			for _, changeColumn := range changeColumns {
-				k := v.Kind + ":" + v.Schema + "." + v.Table + "." + changeColumn
-				_, ok := m.rule.QuickReferenceTable[k]
-				if ok {
-					kind := ""
-					switch v.Kind {
-					case "insert":
-						kind = "I"
-						break
-					case "update":
-						kind = "U"
-						break
-					case "delete":
-						kind = "D"
-						break
+			case "update":
+				{
+					isChange := Wal2JsonHit(m.rule.TableColumn[tableKey], v.ColumnNames, v.ColumnValues, v.OldKeys.KeyNames, v.OldKeys.KeyValues)
+					if isChange {
+						data := Wal2JsonBuildWalData(v)
+						set.Add(model.NewMessageWrapper(&data))
 					}
-					data, _ := json.Marshal(m.getRowInfo(v, kind))
-					set.Add(model.NewMessageWrapper(data))
+					break
+				}
+			case "delete":
+				{
+					data := Wal2JsonBuildWalData(v)
+					set.Add(model.NewMessageWrapper(&data))
 					break
 				}
 			}
@@ -106,36 +70,56 @@ func (m PgMonitor) Wal2JsonProcess1(jsonData string) mapset.Set {
 	return set
 }
 
-func (m PgMonitor) getRowInfo(change ChangeDef, kind string) model.CdcRowInfo {
-	var primaryKey = m.rule.TableColumn[change.Schema+"."+change.Table][0]
-	var index = indexOf(primaryKey, change.ColumnNames)
+func Wal2JsonBuildWalData(change ChangeDef) *model.WalData {
+	ret := &model.WalData{}
+	ret.OperationType = strings.ToUpper(change.Kind)
+	ret.Schema = change.Schema
+	ret.Table = change.Table
 
-	var msg2send model.CdcRowInfo = model.CdcRowInfo{
-		//PatientId: change.ColumnValues[indexPatCol],
-		Kind:   kind,
-		Table:  change.Table,
-		Schema: change.Schema,
-		DbName: "CDSS",
+	if len(change.ColumnNames) > 0 {
+		ret.NewData = make(map[string]interface{}, len(change.ColumnNames))
 	}
 
-	if index != -1 {
-		msg2send.KeyValue = change.ColumnValues[index]
-		msg2send.KeyName = primaryKey
+	for index, value := range change.ColumnNames {
+		ret.NewData[value] = change.ColumnValues[index]
 	}
 
-	return msg2send
+	if len(change.OldKeys.KeyNames) > 0 {
+		ret.OldData = make(map[string]interface{}, len(change.OldKeys.KeyNames))
+	}
+
+	for index, value := range change.OldKeys.KeyNames {
+		ret.OldData[value] = change.OldKeys.KeyValues[index]
+	}
+
+	return ret
 }
 
-func compare(old []interface{}, current []interface{}, columns []string) []string {
-	var changeColumns []string
-	len := len(old)
-	for i := 0; i < len; i++ {
-		ok := old[i] == current[i]
-		if !ok {
-			changeColumns = append(changeColumns, columns[i])
+func Wal2JsonHit(fields []string, newColumns []string, newValues []interface{}, oldColumns []string, oldValues []interface{}) bool {
+	for _, field := range fields {
+		nIndex := indexOf(field, newColumns)
+		oIndex := indexOf(field, oldColumns)
+
+		var nValue interface{}
+		var oValue interface{}
+
+		if nIndex == -1 {
+			nValue = nil
+		} else {
+			nValue = newValues[nIndex]
+		}
+
+		if oIndex == -1 {
+			oValue = nil
+		} else {
+			oValue = oldValues[oIndex]
+		}
+
+		if nValue != oValue {
+			return true
 		}
 	}
-	return changeColumns
+	return false
 }
 
 func indexOf(element string, data []string) int {

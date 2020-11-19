@@ -6,7 +6,7 @@ import (
 )
 
 type Process interface {
-	Write(wal ...*model.MessageWrapper) error
+	Write(dataList ...*model.MessageWrapper) error
 	Close()
 }
 

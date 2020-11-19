@@ -26,7 +26,7 @@ func newMessageWrapper() *MessageWrapper {
 	return data
 }
 
-// PutWalData putback data to pool
+// PutWalData PutBack data to pool
 func PutWalData(data *MessageWrapper) {
 	messagePool.Put(data)
 }

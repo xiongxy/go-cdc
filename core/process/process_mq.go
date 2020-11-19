@@ -2,9 +2,9 @@ package process
 
 import (
 	"cdc-distribute/conf"
+	"cdc-distribute/log"
 	"cdc-distribute/model"
 	"encoding/json"
-	"fmt"
 	"github.com/isayme/go-amqp-reconnect/rabbitmq"
 	"github.com/streadway/amqp"
 )
@@ -25,7 +25,7 @@ func newRabbitProcess(rabbitConf *conf.RabbitConf) Process {
 	}
 
 	var err error
-	conn, err := rabbitmq.Dial(fmt.Sprintf("%s/", rabbitConf.Conn))
+	conn, err := rabbitmq.Dial(rabbitConf.Conn)
 	if err != nil {
 		panic("Failed to connect to AMQP compatible broker at: " + rabbitConf.Conn + " ERR:" + err.Error())
 	}
@@ -38,12 +38,17 @@ func newRabbitProcess(rabbitConf *conf.RabbitConf) Process {
 	return process
 }
 
-func (m *rabbitProcess) Write(wal ...*model.MessageWrapper) error {
+func (r *rabbitProcess) Write(dataList ...*model.MessageWrapper) error {
+	defer func() {
+		for _, v := range dataList {
+			model.PutWalData(v)
+		}
+	}()
 
-	if m.client == nil {
+	if r.client == nil {
 		panic("Tried to send message before connection was initialized. Don't do that.")
 	}
-	ch, err := m.client.Channel() // Get a channel from the connection
+	ch, err := r.client.Channel() // Get a channel from the connection
 
 	if err != nil {
 		panic("Failed create Channel. ERR:" + err.Error())
@@ -51,7 +56,7 @@ func (m *rabbitProcess) Write(wal ...*model.MessageWrapper) error {
 	defer ch.Close()
 
 	queue, err := ch.QueueDeclare( // Declare a queue that will be created if not exists with some args
-		m.rabbitConf.Queue, // our queue name
+		r.rabbitConf.Queue, // our queue name
 		true,               // durable
 		false,              // delete when unused
 		false,              // exclusive
@@ -62,23 +67,23 @@ func (m *rabbitProcess) Write(wal ...*model.MessageWrapper) error {
 		panic("Failed create queue. ERR:" + err.Error())
 	}
 
-	bytes, _ := json.Marshal(wal)
-
-	// Publishes a message onto the queue.
-	err = ch.Publish(
-		"",         // exchange
-		queue.Name, // routing key
-		false,      // mandatory
-		false,      // immediate
-		amqp.Publishing{
-			ContentType: "application/json",
-			Body:        bytes, // Our JSON body as []byte
-		})
-	fmt.Printf("A message was sent to queue %v: %v", m.rabbitConf.Queue, bytes)
+	for _, v := range dataList {
+		bytes, _ := json.Marshal(v)
+		// Publishes a message onto the queue.
+		err = ch.Publish(
+			"",         // exchange
+			queue.Name, // routing key
+			false,      // mandatory
+			false,      // immediate
+			amqp.Publishing{
+				ContentType: "application/json",
+				Body:        bytes, // Our JSON body as []byte
+			})
+		log.Logger.Printf("A message was sent to queue %v: %v", r.rabbitConf.Queue, string(bytes))
+	}
 	return err
-
 }
 
-func (e *rabbitProcess) Close() {
+func (r *rabbitProcess) Close() {
 
 }

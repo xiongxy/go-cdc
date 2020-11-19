@@ -2,14 +2,14 @@ package postgres
 
 import (
 	"cdc-distribute/conf"
+	"cdc-distribute/log"
 	"cdc-distribute/model"
 	"context"
-	mapset "github.com/deckarep/golang-set"
+	mapSet "github.com/deckarep/golang-set"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgproto3/v2"
 	"github.com/satori/go.uuid"
-	"log"
 	"time"
 )
 
@@ -27,7 +27,7 @@ type PgMonitor struct {
 
 func (m PgMonitor) Run(dataChan chan []*model.MessageWrapper) error {
 
-	slotConf := m.conf.SlotConf
+	slotConf := m.conf.Listen.SlotConf
 
 	outputPlugin := slotConf.PluginName
 
@@ -44,30 +44,30 @@ func (m PgMonitor) Run(dataChan chan []*model.MessageWrapper) error {
 
 	conn, err := pgconn.Connect(context.Background(), connStr)
 	if err != nil {
-		log.Fatalln("failed to connect to postgres server:", err)
+		log.Logger.Fatalln("failed to connect to postgres server:", err)
 	}
 	defer conn.Close(context.Background())
 
 	// get IdentifySystem
 	systemInfo, err := pglogrepl.IdentifySystem(context.Background(), conn)
 	if err != nil {
-		log.Fatalln("IdentifySystem failed:", err)
+		log.Logger.Fatalln("IdentifySystem failed:", err)
 	}
-	log.Println("SystemID:", systemInfo.SystemID, "Timeline:", systemInfo.Timeline, "XLogPos:", systemInfo.XLogPos, "DBName:", systemInfo.DBName)
+	log.Logger.Println("SystemID:", systemInfo.SystemID, "Timeline:", systemInfo.Timeline, "XLogPos:", systemInfo.XLogPos, "DBName:", systemInfo.DBName)
 
 	// is temporary slot
 	temporary := slotConf.Temporary
 	_, err = pglogrepl.CreateReplicationSlot(context.Background(), conn, slotName, outputPlugin, pglogrepl.CreateReplicationSlotOptions{Temporary: temporary})
 	if err != nil {
-		log.Fatalln("CreateReplicationSlot failed:", err)
+		log.Logger.Fatalln("CreateReplicationSlot failed:", err)
 	}
-	log.Println("Created temporary replication slot:", slotName)
+	log.Logger.Println("Created temporary replication slot:", slotName)
 
 	err = pglogrepl.StartReplication(context.Background(), conn, slotName, systemInfo.XLogPos, pglogrepl.StartReplicationOptions{PluginArgs: pluginArguments})
 	if err != nil {
-		log.Fatalln("StartReplication failed:", err)
+		log.Logger.Fatalln("StartReplication failed:", err)
 	}
-	log.Println("Logical replication started on slot", slotName)
+	log.Logger.Println("Logical replication started on slot", slotName)
 
 	clientXLogPos := systemInfo.XLogPos
 	standbyMessageTimeout := time.Second * 10
@@ -77,9 +77,9 @@ func (m PgMonitor) Run(dataChan chan []*model.MessageWrapper) error {
 		if time.Now().After(nextStandbyMessageDeadline) {
 			err = pglogrepl.SendStandbyStatusUpdate(context.Background(), conn, pglogrepl.StandbyStatusUpdate{WALWritePosition: clientXLogPos})
 			if err != nil {
-				log.Fatalln("SendStandbyStatusUpdate failed:", err)
+				log.Logger.Fatalln("SendStandbyStatusUpdate failed:", err)
 			}
-			log.Println("Sent Standby status message")
+			log.Logger.Println("Sent Standby status message")
 			nextStandbyMessageDeadline = time.Now().Add(standbyMessageTimeout)
 		}
 
@@ -90,7 +90,7 @@ func (m PgMonitor) Run(dataChan chan []*model.MessageWrapper) error {
 			if pgconn.Timeout(err) {
 				continue
 			}
-			log.Fatalln("ReceiveMessage failed:", err)
+			log.Logger.Fatalln("ReceiveMessage failed:", err)
 		}
 
 		switch msg := msg.(type) {
@@ -99,9 +99,9 @@ func (m PgMonitor) Run(dataChan chan []*model.MessageWrapper) error {
 			case pglogrepl.PrimaryKeepaliveMessageByteID:
 				pkm, err := pglogrepl.ParsePrimaryKeepaliveMessage(msg.Data[1:])
 				if err != nil {
-					log.Fatalln("ParsePrimaryKeepaliveMessage failed:", err)
+					log.Logger.Fatalln("ParsePrimaryKeepaliveMessage failed:", err)
 				}
-				log.Println("Primary Keepalive Message =>", "ServerWALEnd:", pkm.ServerWALEnd, "ServerTime:", pkm.ServerTime, "ReplyRequested:", pkm.ReplyRequested)
+				log.Logger.Println("Primary Keepalive Message =>", "ServerWALEnd:", pkm.ServerWALEnd, "ServerTime:", pkm.ServerTime, "ReplyRequested:", pkm.ReplyRequested)
 
 				if pkm.ReplyRequested {
 					nextStandbyMessageDeadline = time.Time{}
@@ -110,34 +110,35 @@ func (m PgMonitor) Run(dataChan chan []*model.MessageWrapper) error {
 			case pglogrepl.XLogDataByteID:
 				xld, err := pglogrepl.ParseXLogData(msg.Data[1:])
 				if err != nil {
-					log.Fatalln("ParseXLogData failed:", err)
+					log.Logger.Fatalln("ParseXLogData failed:", err)
 				}
 				m.modeProcess(dataChan, xld)
-				log.Println("XLogData =>", "WALStart", xld.WALStart, "ServerWALEnd", xld.ServerWALEnd, "ServerTime:", xld.ServerTime, "WALData", string(xld.WALData))
+				log.Logger.Println("XLogData =>", "WALStart", xld.WALStart, "ServerWALEnd", xld.ServerWALEnd, "ServerTime:", xld.ServerTime, "WALData", string(xld.WALData))
 				clientXLogPos = xld.WALStart + pglogrepl.LSN(len(xld.WALData))
 			}
 		default:
-			log.Printf("Received unexpected message: %#v\n", msg)
+			log.Logger.Printf("Received unexpected message: %#v\n", msg)
 		}
 	}
 }
 
 func (m PgMonitor) modeProcess(dataChan chan []*model.MessageWrapper, xld pglogrepl.XLogData) {
-	set := mapset.NewSet()
+	set := mapSet.NewSet()
 
-	switch m.conf.SlotConf.PluginName {
+	switch m.conf.Listen.SlotConf.PluginName {
 	case "wal2json":
-		set = m.Wal2JsonProcess1(string(xld.WALData))
+		set = m.Wal2JsonProcess(string(xld.WALData))
 		break
 	case "test_decoding":
-		//
+		set = m.TestDecodingProcess(xld)
 		break
 	}
 
 	slice := set.ToSlice()
 	dataList := make([]*model.MessageWrapper, 0)
 	for _, v := range slice {
-		dataList = append(dataList, v.(*model.MessageWrapper))
+		message := v.(*model.MessageWrapper)
+		dataList = append(dataList, message)
 	}
 	dataChan <- dataList
 }

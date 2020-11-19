@@ -2,9 +2,9 @@ package process
 
 import (
 	"cdc-distribute/conf"
+	"cdc-distribute/log"
 	"cdc-distribute/model"
 	"encoding/json"
-	"github.com/sirupsen/logrus"
 )
 
 type fakeHandler struct{}
@@ -14,12 +14,12 @@ func newFakeHandler(_ *conf.Conf) Process {
 	return &fakeHandler{}
 }
 
-func (l *fakeHandler) Write(datas ...*model.MessageWrapper) error {
-	for _, data := range datas {
+func (f *fakeHandler) Write(dataList ...*model.MessageWrapper) error {
+	for _, data := range dataList {
 		bytes, _ := json.Marshal(data)
-		logrus.Infof(string(bytes))
+		log.Logger.Printf("A message was sent to fakeHandler %v", string(bytes))
 	}
 	return nil
 }
 
-func (l *fakeHandler) Close() {}
+func (f *fakeHandler) Close() {}

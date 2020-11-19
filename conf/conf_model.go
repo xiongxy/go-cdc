@@ -9,14 +9,14 @@ type cdcMonitorEntity struct {
 type Conf struct {
 	Identity     int             `json:"identity_id"`
 	Listen       *ListenModel    `json:"listen"`
-	SlotConf     *SlotConf       `json:"slot"`
 	RabbitMqConf *RabbitConf     `json:"rabbit"`
 	Monitors     *[]MonitorModel `json:"monitors"`
 }
 
 type ListenModel struct {
-	DBType           string `json:"database_type"`
-	ConnectionString string `json:"conn"`
+	DBType           string    `json:"database_type"`
+	ConnectionString string    `json:"conn"`
+	SlotConf         *SlotConf `json:"slot"`
 }
 
 type SlotConf struct {

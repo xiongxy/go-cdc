@@ -22,7 +22,7 @@ func Load() []Conf {
 
 func loadDatabase() []cdcMonitorEntity {
 	conn, _ := pgx.Connect(context.Background(), os.Getenv("postgres_db"))
-	rows, _ := conn.Query(context.Background(), "SELECT * FROM cdc_monitor")
+	rows, _ := conn.Query(context.Background(), "SELECT * FROM cdc.monitor")
 
 	var entities []cdcMonitorEntity
 

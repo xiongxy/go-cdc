@@ -5,9 +5,8 @@ import (
 	"cdc-distribute/core/process"
 	"cdc-distribute/database"
 	"cdc-distribute/model"
-	"fmt"
+	"cdc-distribute/monitor"
 	"github.com/deckarep/golang-set"
-	"github.com/sirupsen/logrus"
 	"time"
 )
 
@@ -43,8 +42,7 @@ func (s *Runner) Builder() (*Runner, error) {
 
 	m, err := database.Selector(s.ConfigModel.Listen.DBType, s.ConfigModel, s.QuickCheckRule)
 	if err != nil {
-		logrus.Errorf("create replication slot err: %v", err)
-		return nil, fmt.Errorf("failed to create replication slot: %s", err)
+		return nil, err
 	}
 
 	s.Monitor = m
@@ -133,22 +131,20 @@ func resetTimer(t *time.Timer, d time.Duration) {
 	t.Reset(d)
 }
 
-func (s *Runner) flush() error {
+func (s *Runner) flush() (err error) {
 	defer func() {
 		if len(s.dataList) > 0 {
-			//if err != nil {
-			//	monitor.IncreaseErrorCount(h.sub.SlotName, 1)
-			//} else {
-			//	monitor.IncreaseSuccessCount(h.sub.SlotName, len(h.datas))
-			//}
+			if err != nil {
+				monitor.IncreaseErrorCount(s.ConfigModel.Listen.SlotConf.SlotName, 1)
+			} else {
+				monitor.IncreaseSuccessCount(s.ConfigModel.Listen.SlotConf.SlotName, len(s.dataList))
+			}
 		}
-		//h.callback(h.maxPos)
 		s.dataList = nil
 	}()
 
 	if len(s.dataList) == 0 {
 		return nil
 	}
-
 	return s.Process.Write(s.dataList...)
 }
